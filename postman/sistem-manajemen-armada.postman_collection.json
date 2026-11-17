@@ -1,0 +1,440 @@
+{
+  "info": {
+    "name": "Sistem Manajemen Armada API",
+    "description": "REST API untuk lokasi kendaraan. Jalankan `docker compose up -d --build` dulu; simulator otomatis mengirim lokasi B1234XYZ, B5678ABC, B9012DEF setiap 2 detik.\n\nGeofence \"Default\" (radius 50 m) sudah ada dari migrasi; tambah titik baru via `Create Geofence`.\n\nSatu-satunya variabel collection adalah `baseUrl`. `vehicleId` diisi di tab Params (Path Variables), `start`/`end`/`page`/`limit` di tab Params (Query Params). `end` default `{{$timestamp}}` (waktu sekarang, variabel bawaan Postman).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('status ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Geofence",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/geofences",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Pos Utara\",\n  \"latitude\": -6.2070034,\n  \"longitude\": 106.8456,\n  \"radius_m\": 50\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Titik 200 m utara pusat simulator. Kendaraan B1234XYZ lewat sini, jadi event geofence_entry/exit untuk geofence ini muncul dalam ±30 detik. radius_m opsional (default 50)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const g = pm.response.json().data;",
+              "pm.test('returns id and fields', () => {",
+              "  pm.expect(g.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/); // UUIDv7",
+              "  pm.expect(g.name).to.eql('Pos Utara');",
+              "  pm.expect(g.radius_m).to.eql(50);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Geofence - Default Radius",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/geofences",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Pos Tanpa Radius\",\n  \"latitude\": -6.2,\n  \"longitude\": 106.8\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "pm.test('radius defaults to 50', () => pm.expect(pm.response.json().data.radius_m).to.eql(50));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create Geofence - Invalid (400)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/geofences",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"\",\n  \"latitude\": 120,\n  \"longitude\": 106.8456,\n  \"radius_m\": -5\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('has error message', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List Geofences",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/geofences"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const names = pm.response.json().data.map(g => g.name);",
+              "pm.test('contains Default and created geofence', () => pm.expect(names).to.include.members(['Default', 'Pos Utara']));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Latest Vehicle Location",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/vehicles/:vehicleId/location",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "vehicles",
+            ":vehicleId",
+            "location"
+          ],
+          "variable": [
+            {
+              "key": "vehicleId",
+              "value": "B1234XYZ",
+              "description": "vehicle_id kendaraan"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const d = pm.response.json().data;",
+              "pm.test('vehicle_id matches', () => pm.expect(d.vehicle_id).to.eql(pm.request.url.path[1]));",
+              "pm.test('has coordinates and timestamp', () => {",
+              "  pm.expect(d.latitude).to.be.within(-90, 90);",
+              "  pm.expect(d.longitude).to.be.within(-180, 180);",
+              "  pm.expect(d.timestamp).to.be.above(0);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Vehicle Location History",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/vehicles/:vehicleId/history?start=1700000000&end={{$timestamp}}&page=1&limit=50",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "vehicles",
+            ":vehicleId",
+            "history"
+          ],
+          "query": [
+            {
+              "key": "start",
+              "value": "1700000000",
+              "description": "unix seconds (wajib)"
+            },
+            {
+              "key": "end",
+              "value": "{{$timestamp}}",
+              "description": "unix seconds, >= start (wajib); default waktu sekarang"
+            },
+            {
+              "key": "page",
+              "value": "1",
+              "description": "default 1"
+            },
+            {
+              "key": "limit",
+              "value": "50",
+              "description": "default 100, max 1000"
+            }
+          ],
+          "variable": [
+            {
+              "key": "vehicleId",
+              "value": "B1234XYZ",
+              "description": "vehicle_id kendaraan"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "const start = Number(pm.request.url.query.get('start'));",
+              "const end = Math.floor(Date.now() / 1000) + 5;",
+              "pm.test('all points within range', () => body.data.forEach(p => pm.expect(p.timestamp).to.be.within(start, end)));",
+              "pm.test('sorted ascending', () => body.data.forEach((p, i) => i && pm.expect(p.timestamp).to.be.above(body.data[i-1].timestamp)));",
+              "pm.test('pagination meta', () => pm.expect(body.meta).to.include.keys('page', 'limit', 'count', 'has_more'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "History - Page 2",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/vehicles/:vehicleId/history?start=1700000000&end={{$timestamp}}&page=2&limit=5",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "vehicles",
+            ":vehicleId",
+            "history"
+          ],
+          "query": [
+            {
+              "key": "start",
+              "value": "1700000000",
+              "description": "unix seconds (wajib)"
+            },
+            {
+              "key": "end",
+              "value": "{{$timestamp}}",
+              "description": "unix seconds, >= start (wajib); default waktu sekarang"
+            },
+            {
+              "key": "page",
+              "value": "2"
+            },
+            {
+              "key": "limit",
+              "value": "5"
+            }
+          ],
+          "variable": [
+            {
+              "key": "vehicleId",
+              "value": "B1234XYZ",
+              "description": "vehicle_id kendaraan"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('at most 5 rows', () => pm.expect(pm.response.json().data.length).to.be.at.most(5));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "History - Invalid Range (400)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/vehicles/:vehicleId/history?start=1715009999&end=1715000000",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "vehicles",
+            ":vehicleId",
+            "history"
+          ],
+          "query": [
+            {
+              "key": "start",
+              "value": "1715009999"
+            },
+            {
+              "key": "end",
+              "value": "1715000000"
+            }
+          ],
+          "variable": [
+            {
+              "key": "vehicleId",
+              "value": "B1234XYZ",
+              "description": "vehicle_id kendaraan"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('has error message', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "History - Missing Params (400)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/vehicles/:vehicleId/history",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "vehicles",
+            ":vehicleId",
+            "history"
+          ],
+          "variable": [
+            {
+              "key": "vehicleId",
+              "value": "B1234XYZ",
+              "description": "vehicle_id kendaraan"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Latest Location - Unknown Vehicle (404)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/vehicles/:vehicleId/location",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "vehicles",
+            ":vehicleId",
+            "location"
+          ],
+          "variable": [
+            {
+              "key": "vehicleId",
+              "value": "UNKNOWN999",
+              "description": "vehicle_id kendaraan"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+              "pm.test('has error message', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

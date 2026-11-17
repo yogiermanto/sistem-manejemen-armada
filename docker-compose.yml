@@ -1,0 +1,106 @@
+name: sistem-manajemen-armada
+
+x-app: &app
+  build: .
+  env_file: .env
+  restart: unless-stopped
+
+x-container-network: &container-network
+  HTTP_ADDR: ":8080"
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  MQTT_HOST: mosquitto
+  MQTT_PORT: "1883"
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: "5672"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
+    ports: ["${DATABASE_PORT}:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    image: migrate/migrate:v4.19.1
+    entrypoint:
+      - migrate
+      - -path
+      - /migrations
+      - -database
+      - postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}
+    command: ["up"]
+    volumes:
+      - ./db/migrations:/migrations:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports: ["${RABBITMQ_PORT}:5672", "${RABBITMQ_MANAGEMENT_PORT}:15672"]
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports: ["${MQTT_PORT}:1883"]
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqttdata:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "3"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    <<: *app
+    command: ["api"]
+    environment: *container-network
+    ports: ["8080:8080"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      rabbitmq: { condition: service_healthy }
+      mosquitto: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    environment: *container-network
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      rabbitmq: { condition: service_healthy }
+
+  simulator:
+    <<: *app
+    command: ["simulator"]
+    environment: *container-network
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  rabbitdata:
+  mqttdata:
